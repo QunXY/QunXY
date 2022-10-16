@@ -1,0 +1,365 @@
+
+
+Playbook
+
+
+
+
+
+[root@m01 ~]# mkdir project1
+[root@m01 ~]# cd project1/
+[root@m01 project1]# cat p1.yml 
+---
+#play
+- hosts: webservers
+
+  tasks:
+    - name: Installed Httpd Server
+      yum:
+        name: httpd
+        state: present
+
+    - name: Start Httpd Server
+      systemd:
+        name: httpd
+        state: started
+        enabled: yes
+
+
+2.检查语法，只检查是否是yaml语法格式。并不做逻辑校验。
+[root@m01 project1]# ansible-playbook --syntax-check p1.yml 
+
+playbook: p1.yml
+
+3.模拟执行（不是真的执行）
+[root@m01 project1]# ansible-playbook -C  p1.yml 
+
+4.真实的描述状态（被控端的状态必须与控制端描述的状态一致）
+[root@m01 project1]# ansible-playbook   p1.yml 
+
+
+
+
+多paly语法示例
+[root@m01 project1]# cat p1.yml 
+---
+#play
+- hosts: webservers
+
+  tasks:
+    - name: Installed Httpd Server
+      yum: name=httpd state=present
+
+    - name: Start Httpd Server
+      systemd: name=httpd state=started enabled=yes
+
+    - name: Start Firewalld Server
+      systemd: name=firewalld state=started enabled=yes
+
+    - name: Configure Firewalld Server
+      firewalld: service=http immediate=yes permanent=yes state=enabled
+
+- hosts: web01
+  tasks:
+    - name: Configure web01 Website
+      copy: content='This is Web01' dest=/var/www/html/index.html
+
+- hosts: web02
+  tasks:
+    - name: Cofnigure webi-2 weisite
+      copy: content='This is Web02' dest=/var/www/html/index.html
+
+
+
+
+
+
+
+安装nfs服务
+	1.安装
+	2.配置
+		用户
+		/data/xyz
+	3.启动
+	
+#记得重启你的nfs
+[root@m01 project1]# cat nfs.yml 
+- hosts: web01
+
+  tasks:
+    - name: Install NFS-utils Server
+      yum: name=nfs-utils state=present
+
+    - name: Configure Nfs-utils Server
+      copy: src=./exports.j2 dest=/etc/exports owner=root group=root mode=0644
+
+    - name: Create NFS Group
+      group: name=www gid=666
+
+    - name: Create NFS User
+      user: name=www uid=666 group=www create_home=no shell=/sbin/nologin
+
+    - name: Create Data Directory
+      file: path=/data state=directory owner=www group=www mode=0755 recurse=yes
+
+    - name: Start NFS Server
+      systemd: name=nfs state=started enabled=yes
+
+- hosts: web02
+  tasks:
+    - name: Mount NFS Server
+      mount: path=/opt src=172.16.1.7:/data fstype=nfs opts=defaults state=mounted
+
+
+
+	  
+使用AnsiblePlaybook方式构建LAMP架构，具体操作步骤如下:
+1.使用yum安装 httpd、php、php-mysql、mariadb、firewalld等
+2.启动httpd、firewalld、mariadb等服务
+3.添加防火墙规则，放行http的流量，并永久生效
+4.使用get_url下载 http://fj.xuliangwei.com/public/index.php 文件
+
+[root@m01 project1]# cat lamp.yml 
+#- hosts: webservers
+- hosts: otherservers
+  tasks:
+    - name: Installed Web Packages
+      yum: name=httpd,mariadb-server,php,php-mysql,php-pdo state=present
+
+    - name: Start Web Serivce
+      service: name=httpd state=started
+
+    - name: Start Mariadb Service
+      service: name=mariadb state=started
+
+    - name: Get Wordpress
+      unarchive: src=./wordpress-5.0.3-zh_CN.tar.gz dest=/var/www/html/ copy=yes mode=0755
+
+
+  #  - name: Copy Index.php
+  #    copy: src=./index.php.j2 dest=/var/www/html/index.php
+
+
+ #   - name: Get Url index.php
+ #     get_url: url="http://fj.xuliangwei.com/public/index.php" dest=/var/www/html/index.php
+
+
+变量
+1、playbook变量可以通过多种方式进行定义，最简单的方式就是在playbook的开头hosts下面通过vars进行定义
+
+#安装两个软件包使用变量方式
+[root@m01 project1]# cat  p2.yml 
+- hosts: webservers
+  vars:
+    - web_package: httpd
+    - ftp_package: vsftpd
+  tasks:
+    - name: Installed Packages
+      yum: 
+        name: 
+          - "{{ web_package }}"
+          - "{{ ftp_package }}"
+        state: present
+
+2.也可以在playbook中使用vars_files指定文件作为变量文件，好处就是其他的playbook也可以调
+[root@m01 project1]# cat vars.yml 
+web_package: httpd
+ftp_package: vsftpd
+
+[root@m01 project1]# cat p2.yml 
+- hosts: webservers
+  vars_files: ./vars.yml
+  tasks:
+    - name: Installed Packages
+      yum: 
+        name: 
+          - "{{ web_package }}"
+          - "{{ ftp_package }}"
+        state: present
+
+
+3.在inventory中定义变量，主机变量优先级高于主机组变量(不推荐，容易将环境弄的特别乱)
+[root@m01 project1]# vim /etc/ansible/hosts 
+[webservers]
+web01 ansible_ssh_host=172.16.1.7
+web02 ansible_ssh_host=172.16.1.8
+[webservers:vars]
+filename=group_vars
+
+[root@m01 project1]# cat p3.yml 
+- hosts: webservers
+  tasks:
+    - name: Create File
+      file: path=/tmp/{{ filename }} state=touch
+
+
+4.更好的方式是在ansible的项目目录中创建额外的两个变量目录，分别是host_vars和group_vars
+
+group_vars目录下必须存放和inventory清单文件中定义的组名一致，如下
+[root@m01 project1]# cat /etc/ansible/hosts 
+[webservers]
+web01 ansible_ssh_host=172.16.1.7
+web02 ansible_ssh_host=172.16.1.8
+
+[root@m01 project1]# cat group_vars/webservers 
+web_package: httpd
+ftp_package: vsftpd
+注意：系统提供了特殊的组，all，也就说在group_vars目录下创建一个all文件，定义变量对所有的主机都生效
+
+
+[root@m01 project1]# cat host_vars/web01 
+web_package: zlib-static
+ftp_package: zmap
+
+[root@m01 project1]# cat group_vars/webservers 
+web_package: httpd
+ftp_package: vsftpd
+
+
+[root@m01 project1]#  cat p4.yml 
+- hosts: webservers
+#- hosts: otherservers
+  tasks:
+    - name: Installed Packages
+      yum: 
+        name: 
+          - "{{ web_package }}"
+          - "{{ ftp_package }}"
+        state: present
+
+
+[root@m01 project1]# ansible-playbook p4.yml 
+
+PLAY [webservers] ********************************************************************************************************
+
+TASK [Gathering Facts] ***************************************************************************************************
+ok: [web02]
+ok: [web01]
+
+TASK [Installed Packages] ************************************************************************************************
+ok: [web02]
+changed: [web01]
+
+PLAY RECAP ***************************************************************************************************************
+web01                      : ok=2    changed=1    unreachable=0    failed=0   
+web02                      : ok=2    changed=0    unreachable=0    failed=0   
+
+
+5.通过命令行覆盖变量，inventory的变量会被playbook文件中覆盖，这两种方式的变量都会被命
+令行直接指定变量所覆盖。使用--extra-vars或-e设定变量。
+[root@m01 project1]# ansible-playbook p4.yml -e "web_package=zarafa-devel" -e "ftp_package=zarafa-utils"
+
+
+6.变量优先级测试
+命令行变量--->play中的vars_files--->play中的vars变量-->host_vars中定义的变量--->group_vars/组--->group_vars/all
+[root@m01 project1]# cat p5.yml 
+- hosts: webservers
+#  vars:
+#    filename: play_vars
+#  vars_files:
+#    - ./vars.yml
+  tasks:
+
+    - name: Create 
+      shell: mkdir -pv /tmp/{{ filename }}
+      register: mk_test
+
+    - name: debug
+      debug: msg={{ mk_test }}
+
+
+7.变量注册register
+
+- hosts: webservers
+  tasks:
+    - name: Get Network Port Status
+      shell: netstat -lntp
+      register: net_port
+
+    - name: OutPut Network Port Status
+      debug:
+        msg: "{{ net_port.stdout_lines }}"
+
+
+
+7.变量也支持层级定义，使用"."可能会有问题，建议使用"[]"代替。
+[root@m01 project1]# cat vars1.yml 
+rainbow:
+  web:
+    web_package: httpd
+    db_package: mariadb
+
+code:
+  web:
+    filename: code_web_filename
+
+	
+[root@m01 project1]# cat p8.yml 
+- hosts: webservers
+  vars_files: ./vars1.yml
+  tasks:
+    - name: Install Package
+      yum: name= "{{ rainbow['web']['web_package'] }}"
+
+    - name: create filename
+      file: 
+        path: /tmp/{{ code.web.filename }}
+        state: touch
+		
+
+
+		
+facts (setup模块)
+
+[root@m01 project1]# cat p10.yml 
+- hosts: webservers
+  #gather_facts: no   关闭facts采集
+  vars: 
+    - zabbix_server: 172.16.1.71
+  tasks:
+    - name: Copy Zabbix Agent Configure
+      template: src=./zabbix_agentd.conf dest=/tmp/zabbix_agent.conf
+
+		
+
+playbook安装一个memcached
+[root@m01 project1]# cat memcached.j2 
+PORT="11211"
+USER="memcached"
+MAXCONN="1024"
+CACHESIZE="{{ ansible_memtotal_mb //2 }}"
+OPTIONS=""
+
+[root@m01 project1]# cat p11.yml 
+- hosts: webservers
+  tasks:
+    - name: Installed Memcached
+      yum: name=memcached state=present
+
+    - name: Configure Memcached
+      template: src=./memcached.j2 dest=/etc/sysconfig/memcached
+
+    - name: Start Memcached
+      service: name=memcached state=started enabled=yes
+		
+
+		
+作业：
+	1.安装zabbix-agent端，使用变量方式
+	2.安装lamp架构使用变量
+	3.安装nfs服务端使用变量文件 ，客户端在写一个playbook
+
+	
+
+判断语句
+循环语句
+异常处理
+Include包含
+tag标记
+handlers触发器
+jinja模板
+role角色
+galaxy
+
+ansible加密模块
+tower图形界面（不讲）

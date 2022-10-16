@@ -1,0 +1,447 @@
+
+判断语句
+实践案例一、根据不同操作系统，安装相同的软件包
+	Centos：httpd
+	Ubuntu：httpd2
+	
+[root@m01 project2]# cat when.yml 
+- hosts: webservers
+  tasks:
+
+    - name: Install httpd Server
+      yum: name=httpd state=present
+      when: ansible_distribution == "CentOS"
+
+    - name: Install httpd Server
+      apt: name=httpd2 state=present
+      when: ansible_distribution == "Ubuntu"
+
+	  
+实践案例二、所有为web主机名的添加nginx仓库，其余的都跳过添加
+	1.如何添加yum仓库
+	2.如何判断，判断什么内容
+---
+- hosts: all
+  tasks:
+    - name: Add Nginx Repos
+      yum_repository:
+        name: nginx_tet
+        description: Nginx YUM repo
+        baseurl: http://nginx.org/packages/centos/7/$basearch/
+        gpgcheck: no
+      when: (ansible_hostname is match ("web*")) or (ansible_hostname is match ("lb*"))
+	
+
+1.通过register将命令执行结果保存至变量，然后通过when语句进行判断
+- hosts: webservers
+  tasks:
+    - name: Check Httpd Server
+      command: systemctl is-active httpd
+      ignore_errors: yes
+      register: check_httpd
+
+    #- name: debug outprint			#仅仅只是输出结果
+    #  debug: var=check_httpd
+
+    - name: Httpd Restart
+      service: name=httpd state=restarted
+      when: check_httpd.rc == 0
+
+	  
+	  
+
+循环语句  
+	 
+实践案例一、使用循环启动多个服务
+[root@m01 project2]# cat with.yml 
+- hosts: webservers
+  tasks:
+    - name: Start httpd mariadb
+      systemd: name={{ item }} state=started
+      with_items:
+        - httpd
+        - mariadb
+
+
+1.案例二、使用定义变量方式循环安装软件包。
+- hosts: webservers
+  tasks:
+    - name: ensure a list of packages installed
+      yum: name= "{{ packages }}" state=present
+      vars:
+        packages:
+         - httpd
+         - httpd-tools
+
+#弃用的方式
+- hosts: webservers
+  tasks:
+    - name: ensure a list of packages installed
+      yum: name= "{{ item }}" state=present
+      with_items:
+        - httpd
+        - httpd-tools
+  
+	  
+实践案例三、使用字典循环方式创建用户和批量拷贝文件
+[root@manager ~]# cat loop-user.yml
+- hosts: webservers
+  tasks:
+    - name: Add Users
+      user: name={{ item.name }} groups={{ item.groups }} state=present
+      with_items:
+        - { name: 'testuser1', groups: 'bin' }
+        - { name: 'testuser2', groups: 'root' }
+		
+
+[root@m01 project2]# cat with4.yml 
+- hosts: webservers
+  tasks:
+    - name: Copy Rsync configure and Rsync passwd
+      copy: src={{ item.src }} dest={{ item.dest }} mode={{ item.mode }}
+      with_items:
+        - { src: "./rsyncd.conf", dest: "/etc/rsyncd.conf", mode: "0644" }
+        - { src: "./rsync.passwd", dest: "/tmp/rsync.passwd", mode: "0600" }
+	  
+	  
+
+handlers触发器
+
+[root@m01 project2]# cat han.yml 
+- hosts: webservers
+  vars:
+    - http_port: 8083
+  tasks:
+
+    - name: Install Http Server
+      yum: name=httpd state=present
+
+    - name: configure httpd server
+      template: src=./httpd.conf.j2 dest=/etc/httpd/conf/httpd.conf
+      notify: 
+        - Restart Httpd Server
+        - Restart PHP Server
+
+    - name: start httpd server
+      service: name=httpd state=started enabled=yes
+
+  handlers:
+    - name: Restart Httpd Server
+      systemd: name=httpd state=restarted 
+
+    - name: Restart PHP Server
+      systemd: name=php-fpm state=restarted
+
+3.handlers注意事项
+1.无论多少个task通知了相同的handlers，handlers仅会在所有tasks结束后运行一次。
+2.只有task发生改变了才会通知handlers，没有改变则不会触发handlers
+3.不能使用handlers替代tasks
+
+
+
+[root@m01 project2]# cat tag.yml 
+- hosts: webservers
+  vars:
+    - http_port: 8083
+  tasks:
+
+    - name: Install Http Server
+      yum: name=httpd state=present
+      tags: 
+        - install_httpd
+        - httpd_server
+
+    - name: configure httpd server
+      template: src=./httpd.conf.j2 dest=/etc/httpd/conf/httpd.conf
+      notify: Restart Httpd Server
+      tags: 
+        - confiure_httpd
+        - httpd_server
+
+    - name: start httpd server
+      service: name=httpd state=started enabled=yes
+      tags: service_httpd #别名
+
+  handlers:
+    - name: Restart Httpd Server
+      systemd: name=httpd state=restarted 
+
+[root@m01 project2]# ansible-playbook tag.yml --list-tags
+[root@m01 project2]# ansible-playbook tag.yml -t httpd_server
+[root@m01 project2]# ansible-playbook tag.yml -t install_httpd,confiure_httpd
+[root@m01 project2]# ansible-playbook tag.yml --skip-tags httpd_server
+
+
+Include包含
+include（import_playbook）
+include_tasks
+[root@m01 project2]# cat task.yml 
+- hosts: webservers
+  vars:
+    - http_port: 801
+
+  tasks:
+    - include_tasks: task_install.yml
+    - include_tasks: task_configure.yml
+    - include_tasks: task_start.yml
+
+  handlers:
+    - name: Restart Httpd Server
+      systemd: name=httpd state=restarted
+
+[root@m01 project2]# cat task_install.yml 
+- name: Install Http Server
+  yum: name=httpd state=present
+
+[root@m01 project2]# cat task_configure.yml 
+- name: configure httpd server
+  template: src=./httpd.conf.j2 dest=/etc/httpd/conf/httpd.conf
+  notify: Restart Httpd Server
+
+[root@m01 project2]# cat task_start.yml 
+- name: start httpd server
+  service: name=httpd state=started enabled=yes
+  
+  
+忽略错误ignore_errors
+[root@manager ~]# cat f9.yml
+---
+- hosts: webservers
+  tasks:
+    - name: Ignore False
+      command: /bin/false
+      ignore_errors: yes
+	  
+    - name: touch new file
+      file: path=/tmp/bgx_ignore state=touch
+
+
+异常处理
+force_handlers: yes		强制调用handlers
+changed_when: false		被管理主机没有发生变化，可以使用参数将change状态改为ok
+changed_when: httpd_check.stdout.find('OK')			#查看变量中的某个字符串
+
+[root@m01 project2]# cat changed_when.yml 
+- hosts: webservers
+  vars:
+    - http_port: 8083
+  tasks:
+
+    - name: configure httpd server
+      template: src=./httpd.conf.j2 dest=/etc/httpd/conf/httpd.conf
+      notify: Restart Httpd Server
+
+    - name: Check HTTPD
+      shell: /usr/sbin/httpd -t
+      register: httpd_check
+      changed_when: 
+	    - httpd_check.stdout.find('OK')
+         - false
+
+    - name: start httpd server
+      service: name=httpd state=started enabled=yes
+
+  handlers:
+    - name: Restart Httpd Server
+      systemd: name=httpd state=restarted 
+
+	  
+	  
+failed_when 
+命令不依赖返回状态码来判定是否执行失败，而是要查看命令返回内容来决定，比如返回内容中包括 failed 字符串，则判定为失败。示例如下：
+- name: this command prints FAILED when it fails 
+  command: /usr/bin/example-command -x -y -z 
+  register: command_result 
+  failed_when: "'FAILED' in command_result.stderr"
+  
+  
+  
+-------task任务处理相关流程与控制参数
+	when 			判断
+	item 			循环
+	handlers		触发器(需要task使用notify通知)
+	tags			标签（调试使用）
+	include_tasks	包含task任务
+    ignore_errors   忽略错误
+	错误处理
+			force_handlers  #扩展
+			changed_when	false   抑制改变的状态为ok（获取系统的状态信息时）
+			------------------------------重要（检查服务的配置是否正常，正常则不处理，不正常则中断）
+			register: httpd_check
+			changed_when: 
+				- httpd_check.stdout.find('OK')
+				- false
+
+jinja模板
+2.jinja 模板逻辑关系 
+{% for i in EXPR %}...{% endfor%} 作为循环表达式 
+{% if EXPR %}...{% elif EXPR  %}...{% endif%} 作为条件判断 
+
+--------------------------------------nginx
+[root@m01 project2]# cat jinja_nginx.yml 
+- hosts: webservers
+  vars:
+    - http_port: 80
+    - server_name: www.oldboyedu.com
+  tasks:
+    - name: Copy Nginx configure
+      template: src=./oldboyedu.conf.j2 dest=/etc/nginx/conf.d/oldboyedu_proxy.conf
+	  
+[root@m01 project2]# cat oldboyedu.conf.j2 
+upstream {{ server_name }} {
+{% for i in range(1,20) %}
+  server 172.16.1.{{i}}:{{http_port}};
+{%endfor%}
+}
+server {
+	listen {{ http_port }};
+	server_name {{ server_name }};
+	location / {
+		proxy_pass http://{{ server_name }};
+		proxy_set_header Host $http_host;
+	}
+}
+
+--------------------------------------keepalived
+[root@m01 project2]# cat jinja_keepalived.yml 
+- hosts: webservers
+  tasks:
+    - name: Copy Keepalived Configure
+      template: src=./kee.conf.j2 dest=/tmp/keepalived.conf
+
+[root@m01 project2]# cat kee.conf.j2 
+global_defs {     
+    router_id {{ ansible_hostname }}
+}
+
+vrrp_instance VI_1 {
+{%if ansible_hostname =="web01" %}
+    state MASTER
+    priority 150
+{%elif ansible_hostname == "web02" %}
+    state BACKUP
+    priority 100
+{%endif%}
+
+    interface eth0
+    virtual_router_id 50
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass 1111
+}
+    virtual_ipaddress {
+        10.0.0.3
+    }
+}
+
+使用Ansible jinja IF 生成不同的mysql配置文件  （自定义变量）
+
+[root@m01 project2]# cat jinja_mysql.yml 
+- hosts: webservers
+  gather_facts: no
+  vars:
+    PORT: 13306
+   # PORT: false  #相当于开关
+  tasks:
+    - name: Copy MySQL Configure
+      template: src=./my.cnf.j2 dest=/tmp/my.cnf
+
+[root@m01 project2]# cat my.cnf.j2 
+{% if PORT %}
+bind-address=0.0.0.0:{{ PORT }}
+{% else %}
+bind-address=0.0.0.0:3306
+{%endif%}
+
+ansible加密模块
+[root@m01 project2]# ansible-vault --help
+Usage: ansible-vault [create|decrypt|edit|encrypt|encrypt_string|rekey|view] [options] [vaultfile.yml]
+
+加密一个文件
+ansible-vault encrypt include.yml
+
+查看一个文件
+[root@m01 project2]# ansible-vault view include.yml 
+Vault password: 
+- import_playbook: han.yml
+- import_playbook: when2.yml 
+
+修改加密的文件内容
+[root@m01 project2]# ansible-vault edit include.yml
+
+rekey 修改密码
+[root@m01 project2]# ansible-vault rekey include.yml 
+Vault password: 
+New Vault password: 
+Confirm New Vault password: 
+Rekey successful
+
+执行加密的playbook
+echo "1" >pass
+chmod 600 pass 
+ansible-playbook include.yml  --vault-password-file=pass
+--ask-vault-pass（交互式输入密码）
+
+
+role角色
+[root@m01 ~]# cd /etc/ansible/roles/
+[root@m01 roles]# mkdir nfs/{tasks,handlers,templates} -pv
+mkdir: created directory ‘nfs’
+mkdir: created directory ‘nfs/tasks’
+mkdir: created directory ‘nfs/handlers’
+mkdir: created directory ‘nfs/templates’
+
+
+[root@m01 roles]# cat nfs/tasks/install.yml 
+- name: Install NFS-utils Server
+  yum: name=nfs-utils state=present
+
+[root@m01 roles]# cat nfs/tasks/config.yml 
+- name: Configure Nfs-utils Server
+  template: src=./exports.j2 dest=/etc/exports owner=root group=root mode=0644
+  notify: Restart NFS Server
+
+[root@m01 roles]# cat nfs/tasks/start.yml 
+- name: Start NFS Server
+  systemd: name=nfs state=started enabled=yes
+
+[root@m01 roles]# cat nfs/tasks/main.yml 
+- include_tasks: install.yml
+- include_tasks: config.yml
+- include_tasks: start.yml
+
+[root@m01 roles]# cat nfs-client/tasks/main.yml 
+- name: Mount NFS Server
+  mount: path=/opt src=172.16.1.7:/data fstype=nfs opts=defaults state=mounted
+[root@m01 roles]# 
+[root@m01 roles]# 
+[root@m01 roles]# cat site.yml 
+- hosts: web01
+  roles:
+    - nfs
+
+- hosts: web02
+  roles:
+    - nfs-client
+执行ansible-playbook site.yml
+----------------------------安装memcached
+[root@m01 roles]# mkdir memcached/{tasks,handlers,templates} -pv
+mkdir: created directory ‘memcached’
+mkdir: created directory ‘memcached/tasks’
+mkdir: created directory ‘memcached/handlers’
+mkdir: created directory ‘memcached/templates’
+
+galaxy
+
+
+
+
+
+
+
+
+
+
+
+
