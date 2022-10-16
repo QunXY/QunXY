@@ -1,0 +1,321 @@
+---
+#ansible-playbook 编写批量一键安装lnmp.yaml
+#anthor:肖钰群
+#play
+#######################nginx################################
+- hosts: lnmps
+  tasks:
+    - name: 安装nginx-yum源
+      yum:
+        name: http://nginx.org/packages/centos/7/noarch/RPMS/nginx-release-centos-7-0.el7.ngx.noarch.rpm
+        state: present
+    - name: 安装 nginx
+      yum:
+        name: nginx
+        state: present
+      
+    - name: 启动nginx服务并加入开机自启
+      systemd: 
+        state: started
+        name: nginx
+        enabled: yes
+        masked: no
+      
+###################mysql#########################
+
+- hosts: 127.0.0.1
+  tasks:
+    - name: 下载mysql-5.7
+      get_url:
+        url: https://repo.huaweicloud.com/mysql/Downloads/MySQL-5.7/mysql-5.7.38-linux-glibc2.12-x86_64.tar.gz
+        dest: /usr/local/src
+        force: yes
+
+- hosts: lnmps
+  tasks:
+    - name: 创建MySQL用户组
+      group:
+        name: mysql
+        gid: 3306
+        state: present
+  
+    - name: 添加mysql用户
+      user:
+        name: mysql
+        uid: 3306
+        comment: "mysql操作用户"
+        shell: /sbin/nologin
+        group: mysql
+      
+    - name: 创建配置文件/etc/my.cnf
+      file:
+        path: /etc/my.cnf
+        state: touch
+        mode: u=rw,g=r,o=r
+    
+    - name: 编辑配置文件/etc/my.cnf
+      blockinfile:
+        path: /etc/my.cnf
+        block: |
+          [mysqld]
+          user=mysql
+          basedir=/usr/local/mysql
+          datadir=/data/mysqldata
+          log_bin=/data/binlog/mysql-bin
+          server_id=6
+          log-error=/var/log/mysql/error.log
+          pid-file=/data/mysqldata/mysql.pid
+          port=3306
+          socket=/tmp/mysql.sock
+          #gtid主从配置
+          log-bin=mysql-bin
+          gtid-mode=on
+          enforce-gtid-consistency=on
+          binlog-format=row
+          log-slave-updates=1
+          skip-slave-start=1
+          [mysql]
+          socket=/tmp/mysql.sock
+        state: present
+    
+    - name: 解压mysql.tar.gz
+      unarchive:
+        src: /usr/local/src/mysql-5.7.38-linux-glibc2.12-x86_64.tar.gz
+        dest: /usr/local/src
+        mode: 0755
+        copy: yes
+        
+    - name: 将mysql.tar.gz解压后改名为mysql
+      command: mv -f /usr/local/src/mysql-5.7.38-linux-glibc2.12-x86_64 /usr/local/mysql
+    
+    - name: 创建目录并递归设置权限
+      file:
+        path: "{{ item }}"
+        owner: mysql
+        group: mysql
+        state: directory
+        recurse: yes
+      with_items:
+      - /usr/local/mysql
+      - /data/mysqldata
+      - /var/log/mysql
+      - /data/binlog
+      
+    - name: 增加环境变量
+      blockinfile:
+        path: /etc/profile
+        block: |
+          export PATH=$PATH:/usr/local/mysql/bin
+        marker: "<!-- {mark}******mysql******* -->"
+        backup: yes
+        
+    - name: soruce环境
+      command: source /etc/profile
+      
+    - name: 初始化mysql
+      shell: mysqld --initialize-insecure  --user=mysql --basedir=/usr/local/mysql --datadir=/data/mysqldata
+      
+    - name: 复制启动脚本
+      copy:
+        src: /usr/local/mysql/support-files/mysql.server
+        dest: /etc/init.d/mysqld
+    
+    - name: 生成系统命令
+      file:
+        src: /usr/local/mysql/bin/mysql
+        dest: /usr/bin/mysql
+        owner: mysql
+        group: mysql
+        state: link
+
+        
+    - name: 启动服务并加入开机自启
+      systemd:
+        name: mysqld
+        enabled: yes
+        state: started
+        
+
+#####################php################
+- hosts: 127.0.0.1
+  tasks:
+    - name: 下载php安装包
+      get_url:
+        url: https://www.php.net/distributions/php-7.4.30.tar.gz
+        dest: /usr/local/src
+        force: no
+    
+    - name: 下载php.libzip.tar包
+      get_url:
+        url: https://libzip.org/download/libzip-1.9.2.tar.gz
+        dest: /usr/local/src
+        force: no
+        validate_certs: no
+       
+    - name: 下载cmake.tar包
+      get_url:
+        url: --no-check-certificate https://cmake.org/files/v3.5/cmake-3.5.2.tar.gz
+        dest: /usr/local/src
+        force: no
+        validate_certs: no
+        
+- hosts: lnmps
+  tasks:
+    - name: 解压php.libzip.tar
+      unarchive:
+        src: /usr/local/src/libzip-1.9.2.tar.gz
+        dest: /usr/local/src
+        mode: 0755
+        copy: yes
+        
+    - name: 解压php-7.4.30.tar.gz
+      unarchive:
+        src: /usr/local/src/php-7.4.30.tar.gz
+        dest: /usr/local/src
+        mode: 0755
+        copy: yes
+        
+    - name: 解压cmake-3.5.2.tar.gz
+      unarchive:
+        src: /usr/local/src/cmake-3.5.2.tar.gz
+        dest: /usr/local/src
+        mode: 0755
+        copy: yes
+        
+    - name: yum安装需要依赖
+      yum:
+        name: "{{ packages }}"
+      vars:
+        packages:
+        - autoconf
+        - gcc
+        - libxml2-devel
+        - openssl-devel
+        - curl-devel
+        - libjpeg-devel 
+        - libpng-devel
+        - libXpm-devel
+        - freetype-devel
+        - libmcrypt-devel
+        - make
+        - ImageMagick-devel
+        - libssh2-devel
+        - gcc-c++
+        - cyrus-sasl-devel
+        - sqlite-devel
+    
+    - name: 授权用户组www
+      group:
+        name: www
+        state: present
+    - name: 授权用户www
+      user:
+        name: www
+        shell: /sbin/nologin
+        group: www
+        
+    - name: 预编译cmake-3.5
+      command: /usr/local/src/cmake-3.5.2/bootstrap --prefix=/usr
+    - name: 编译安装cmake-3.5
+      command: gmake -j $(nproc) && make install
+      
+    - name: 创建libzip所需要的目录
+      file: 
+        path: /usr/local/src/libzip-1.9.2/build
+        state: directory
+        
+    - name: 预编译安装libzip
+      command: cmake /usr/local/src/libzip-1.9.2
+      
+    - name: 编译安装libzip
+      command: make -j $(nproc) && make install
+      args:
+        chdir: /usr/local/src/libzip-1.9.2/build
+        
+    - name: 安装需要依赖的oniguruma等库
+      yum:
+        name: "{{ packages }}"
+      vars:
+        packages:
+        - http://rpms.remirepo.net/enterprise/7/remi/x86_64/oniguruma5php-6.9.8-1.el7.remi.x86_64.rpm
+        - http://rpms.remirepo.net/enterprise/7/remi/x86_64/oniguruma5php-devel-6.9.8-1.el7.remi.x86_64.rpm
+        
+    - name: php预编译
+      command:
+        argv:
+          - ./configure  --prefix=/usr/local/php \
+            --with-config-file-path=/usr/local/php/etc \
+            --with-config-file-scan-dir=/usr/local/php/etc/php.d \
+            --disable-ipv6 \
+            --enable-bcmath \
+            --enable-calendar \
+            --enable-exif \
+            --enable-fpm \
+            --with-fpm-user=www \
+            --with-fpm-group=www \
+            --enable-ftp \
+            --enable-gd-jis-conv \
+            --enable-gd-native-ttf \
+            --enable-inline-optimization \
+            --enable-mbregex \
+            --enable-mbstring \
+            --enable-mysqlnd \
+            --enable-opcache \
+            --enable-pcntl \
+            --enable-shmop \
+            --enable-soap \
+            --enable-sockets \
+            --enable-static \
+            --enable-sysvsem \
+            --enable-wddx \
+            --enable-xml \
+            --with-curl \
+            --with-gd \
+            --with-jpeg-dir \
+            --with-freetype-dir \
+            --with-xpm-dir \
+            --with-png-dir \
+            --with-gettext \
+            --with-iconv \
+            --with-libxml-dir \
+            --with-mcrypt \
+            --with-mhash \
+            --with-mysqli \
+            --with-pdo-mysql \
+            --with-pear \
+            --with-openssl \
+            --with-xmlrpc \
+            --with-zlib \
+            --disable-debug \
+            --disable-phpdbg
+            
+    
+    - name: mkdir php.d
+      file:
+        path: /usr/local/php/etc/php.d
+        state: directory 
+    
+    
+    - name: 编译安装php
+      command: make -j $(nproc) && make install
+      args:
+        chdir: /usr/local/src/php-7.4.30
+        
+    - name: 配置php-fpm
+      command:
+        argv:
+          - cp /usr/bin/src/php-7.4.30/php.ini-production /etc/php.ini
+          - cp /usr/local/php/etc/php-fpm.conf.default /usr/local/php/etc/php-fpm.conf
+          - cp /usr/local/php/etc/php-fpm.d/www.conf.default /usr/local/php/etc/php-fpm.d/www.conf
+          - cp /usr/bin/src/php-7.4.30/sapi/fpm/init.d.php-fpm /etc/init.d/php-fpm
+          - ln -s -f phar.phar /usr/local/php/bin/phar
+          - chmod +x /etc/init.d/php-fpm
+          
+    - name: 开启php服务并开机自启
+      systemd:
+        state: started
+        name: php-fpm
+        enabled: yes
+        masked: no
+        
+...

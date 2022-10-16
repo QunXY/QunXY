@@ -1,0 +1,238 @@
+---
+- hosts: web01
+  tasks:
+    - name: Download Repository
+      get_url:
+        url: https://mirrors.aliyun.com/repo/epel-7.repo
+        dest: /etc/yum.repos.d/epel.repo
+        mode: '0644'
+    - name: Install Dependencies
+      yum:
+        name:
+          - openssl-devel
+          - openssl
+          - pcre
+          - pcre-devel
+          - gcc
+          - gcc-c++
+          - zlib
+          - zlib-devel
+          - bzip2-devel.x86_64
+          - curl-devel
+          - sqlite-devel
+          - krb5-devel
+          - libxml2-devel
+          - libpng-devel
+          - libjpeg-devel
+          - freetype-devel
+          - oniguruma-devel
+          - openldap-devel
+          - libxslt-devel
+        state: present
+    - name: Get Nginx And Unarchive
+      unarchive:
+        src: https://nginx.org/download/nginx-1.22.0.tar.gz
+        dest: /usr/local/src/
+        remote_src: yes
+    - name: Create User Nginx
+      user:
+        name: nginx
+        shell: /sbin/nologin
+    - name: Compile
+      shell: "cd /usr/local/src/nginx-1.22.0 && ./configure --prefix=/etc/nginx --sbin-path=/usr/sbin/nginx --modules-path=/usr/lib64/nginx/modules --conf-path=/etc/nginx/nginx.conf --error-log-path=/var/log/nginx/error.log --http-log-path=/var/log/nginx/access.log --pid-path=/var/run/nginx.pid --lock-path=/var/run/nginx.lock --http-client-body-temp-path=/var/cache/nginx/client_temp --http-proxy-temp-path=/var/cache/nginx/proxy_temp --http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp --http-uwsgi-temp-path=/var/cache/nginx/uwsgi_temp --http-scgi-temp-path=/var/cache/nginx/scgi_temp --user=nginx --group=nginx --with-compat --with-file-aio --with-threads --with-http_addition_module --with-http_auth_request_module --with-http_dav_module --with-http_flv_module --with-http_gunzip_module --with-http_gzip_static_module --with-http_mp4_module --with-http_random_index_module --with-http_realip_module --with-http_secure_link_module --with-http_slice_module --with-http_ssl_module --with-http_stub_status_module --with-http_sub_module --with-http_v2_module --with-mail --with-mail_ssl_module --with-stream --with-stream_realip_module --with-stream_ssl_module --with-stream_ssl_preread_module --with-cc-opt='-O2 -g -pipe -Wall -Wp,-D_FORTIFY_SOURCE=2 -fexceptions -fstack-protector-strong --param=ssp-buffer-size=4 -grecord-gcc-switches -m64 -mtune=generic -fPIC' --with-ld-opt='-Wl,-z,relro -Wl,-z,now -pie' && make && make install"
+    - name: Create Cache File
+      file:
+        path: /var/cache/nginx
+        owner: nginx
+        group: nginx
+        state: directory        
+        mode: '0644'
+    - name: Compose Start Program
+      copy:
+        content: '[Unit]
+
+Description=nginx - high performance web server
+
+Documentation=http://nginx.org/en/docs/
+
+After=network-online.target remote-fs.target nss-lookup.target
+
+
+[Service]
+
+Type=forking
+
+PIDFile=/var/run/nginx.pid
+
+ExecStart=/usr/sbin/nginx -c /etc/nginx/nginx.conf
+
+ExecReload=/usr/sbin/nginx -s reload
+
+ExecStop=/usr/sbin/nginx -s quit
+
+PrivateTmp=true
+
+
+[Install]
+
+WantedBy=multi-user.target'
+        dest: /usr/lib/systemd/system/nginx.service
+    - name: Start Nginx
+      systemd:
+        name: nginx.service
+        state: started
+        daemon_reload: yes
+        enabled: yes
+    - name: Get PHP And Unarchive
+      unarchive:
+        src: http://cn2.php.net/get/php-7.1.19.tar.gz/from/this/mirror
+        dest: /usr/local/src/
+        remote_src: yes
+    - name: Compile
+      shell: "cd /usr/local/src/php-7.1.19 && ./configure --prefix=/usr/local/php --with-config-file-path=/usr/local/php/etc/ --with-curl --with-freetype-dir --with-gd --with-jpeg-dir --with-gettext --with-iconv-dir --with-kerberos --with-libdir=lib64 --with-libxml-dir --with-mysqli --with-openssl --with-pcre-regex --with-pdo-mysql --with-pdo-sqlite --with-pear --with-png-dir --with-xmlrpc --with-xsl --with-zlib --enable-fpm --enable-bcmath --enable-libxml --enable-inline-optimization --enable-gd-native-ttf --enable-mbregex --enable-mbstring --enable-opcache --enable-pcntl --enable-shmop --enable-soap --enable-sockets --enable-sysvsem --enable-xml --enable-zip && make && make install"
+    - name: Copy Configuration File
+      copy:
+        src: /usr/local/src/php-7.1.19/php.ini-production
+        dest: /usr/local/php/etc/php.ini
+        remote_src: yes
+    - name: Copy Configuration File
+      copy:
+        src: /usr/local/php/etc/php-fpm.conf.default
+        dest: /usr/local/php/etc/php-fpm.conf
+        remote_src: yes
+    - name: Copy Configuration File
+      copy:
+        src: /usr/local/php/etc/php-fpm.d/www.conf.default
+        dest: /usr/local/php/etc/php-fpm.d/www.conf
+        remote_src: yes
+    - name: Compose Start Program
+      copy:
+        content: '[Unit]
+
+Description=The PHP FastCGI Process Manager
+
+After=syslog.target network.target
+
+
+[Service]
+
+Type=simple
+
+PIDFile=/run/php-fpm.pid
+
+ExecStart=/usr/local/php/sbin/php-fpm --nodaemonize --fpm-config /usr/local/php/etc/php-fpm.conf
+
+ExecReload=/bin/kill -USR2 $MAINPID
+
+ExecStop=/bin/kill -SIGINT $MAINPID
+
+
+[Install]
+
+WantedBy=multi-user.target'
+        dest: /etc/systemd/system/php-fpm.service
+    - name: Start PHP
+      systemd:
+        name: php-fpm.service
+        state: started
+        enabled: yes
+    - name: Purge Environment
+      shell: "rpm -qa | grep mariadb | xargs -i yum remove -y {}"
+    - name: Stopped Firewalld
+      systemd:
+        name: firewalld
+        state: stopped
+        enabled: no
+    - name: Get MySQL And Unarchive
+      unarchive:
+        src: https://repo.huaweicloud.com/mysql/Downloads/MySQL-5.7/mysql-5.7.38-linux-glibc2.12-x86_64.tar.gz
+        dest: /usr/local
+        remote_src: yes
+    - name: Create User For MySQL
+      user:
+        name: mysql
+        shell: /sbin/nologin
+    - name: Copy MySQL HomeDir To /usr/local/mysql
+      copy:
+        src: /usr/local/mysql-5.7.38-linux-glibc2.12-x86_64/
+        dest: /usr/local/mysql
+        owner: mysql
+        group: mysql
+        remote_src: yes
+        follow: yes
+    - name: Remove MySQL HomeDir To /usr/local/mysql-5.7.38-linux-glibc2.12-x86_64
+      file:
+        path: /usr/local/mysql-5.7.38-linux-glibc2.12-x86_64
+        state: absent
+    - name: Create MySQL Datafile
+      file:
+        path: /data/mysqldata
+        state: directory
+        owner: mysql
+        group: mysql
+    - name: Create MySQL Logfile
+      file:
+        path: /var/log/mysql
+        state: directory
+        owner: mysql
+        group: mysql
+    - name: Initialize MySQL
+      shell: "/usr/local/mysql/bin/mysqld --initialize-insecure  --user=mysql --basedir=/usr/local/mysql --datadir=/data/mysqldata"
+    - name: Compose MySQL Configuration
+      copy:
+        content: '[mysqld]
+
+user=mysql
+
+basedir=/usr/local/mysql
+
+datadir=/data/mysqldata
+
+log_bin=/data/mysqldata/mysql-bin
+
+gtid_mode=on
+
+enforce-gtid-consistency=on
+
+server_id=6
+
+log-error=/var/log/mysql/error.log
+
+
+slow_query_log = on
+
+long_query_time = 2
+
+slow-query-log-file = /var/log/mysql/slow.log
+
+port=3306
+
+socket=/tmp/mysql.sock
+
+
+[mysql]
+
+socket=/tmp/mysql.sock'
+        dest: /etc/my.cnf
+    - name: Copy Initiate file to /etc/init.d/ And Set Premissions
+      copy:
+        src: /usr/local/mysql/support-files/mysql.server
+        dest: /etc/init.d/mysqld
+        mode: '0755'
+        remote_src: yes
+    - name: Chkconfig Add MySQL
+      command: "chkconfig --add mysqld"
+    - name:  MySQL Add To Environment Variables
+      shell: "export PATH=$PATH:/usr/local/mysql/bin && echo 'PATH=$PATH:/usr/local/mysql/bin' >> /etc/profile && source /etc/profile"
+    - name: Create A Symbolic Link
+      file:
+        src: /usr/local/mysql/bin/mysql
+        dest: /sbin/mysql
+        owner: mysql
+        group: mysql
+        state: link
+    - name: Started MySQL
+      systemd:
+        name: mysqld
+        state: started
+        daemon_reload: yes

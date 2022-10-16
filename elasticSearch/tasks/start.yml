@@ -1,0 +1,5 @@
+- name: 启动ela服务
+  systemd: 
+    name: elasticsearch
+    state: started
+    enabled: yes

@@ -1,0 +1,20 @@
+- name: es安装包下载
+  get_url:
+    url: http://192.168.1.200/package/elk/elasticsearch-7.7.1-x86_64.rpm
+    dest: /usr/local/src
+    force: no
+
+- name: java安装包下载
+  get_url:
+    url: http://192.168.1.200/rpm/jdk-8u151-linux-x64.rpm
+    dest: /usr/local/src
+    force: no
+
+- name: jdk+es安装
+  yum:
+    name: "{{ packages }}"
+  vars:
+    packages:
+    - /usr/local/src/jdk-8u151-linux-x64.rpm
+    - /usr/local/src/elasticsearch-7.7.1-x86_64.rpm
+

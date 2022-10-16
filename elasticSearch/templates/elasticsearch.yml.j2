@@ -1,0 +1,12 @@
+cluster.name: elk-cluster
+node.master: true
+node.data: true
+node.name: elk01
+path.data: /data/ela-data
+path.logs: /data/ela-log
+network.host: $IP
+http.port: 9200
+discovery.seed_hosts: ["$IP", "$ip1", "$ip2"]
+cluster.initial_master_nodes: ["$IP", "$ip1", "$ip2"]
+http.cors.enabled: true
+http.cors.allow-origin: "*"

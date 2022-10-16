@@ -1,0 +1,4 @@
+---
+- hosts: web01
+  roles:
+    - elasticSearch
